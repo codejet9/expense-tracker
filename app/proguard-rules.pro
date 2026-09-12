@@ -1,0 +1,2 @@
+-keep class com.dabhiram.expensetracker.data.model.** { *; }
+-keep class com.dabhiram.expensetracker.data.db.** { *; }

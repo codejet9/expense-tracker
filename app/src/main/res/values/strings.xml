@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UPI Expense Tracker</string>
+    <string name="accessibility_service_label">UPI Expense Tracker</string>
+    <string name="accessibility_service_description">Reads UPI payment success screens from Google Pay and PhonePe to automatically track your expenses. No data leaves your device.</string>
+
+    <!-- Notification channels -->
+    <string name="channel_categorize_name">Categorize Payments</string>
+    <string name="channel_categorize_description">Asks you to categorize unrecognized UPI payments</string>
+    <string name="channel_service_name">Service Status</string>
+    <string name="channel_service_description">Shows that the UPI tracking service is running</string>
+    <string name="channel_weekly_name">Weekly Summary</string>
+    <string name="channel_weekly_description">Weekly spending summary every Sunday evening</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_reports">Reports</string>
+    <string name="nav_inbox">Inbox</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Categories -->
+    <string-array name="categories">
+        <item>Food</item>
+        <item>Groceries</item>
+        <item>Travel</item>
+        <item>Utilities</item>
+        <item>Entertainment</item>
+        <item>Shopping</item>
+        <item>Personal Transfers</item>
+        <item>Bills &amp; Rent</item>
+        <item>Health</item>
+        <item>Education</item>
+        <item>Other</item>
+    </string-array>
+</resources>
