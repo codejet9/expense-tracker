@@ -77,7 +77,7 @@ Rules:
 - Reference specific amounts and merchants from the data
 - If Food/Groceries > 30% of spend, suggest meal planning or cooking at home
 - If Personal Transfers are high, note it's fine but not a saving opportunity
-- Skip "Paid on Behalf" — it's reimbursable
+- Skip "Lent" — it's reimbursable
 - Write exactly 2-3 bullet points starting with •
 - Each bullet max 25 words, no fluff
 

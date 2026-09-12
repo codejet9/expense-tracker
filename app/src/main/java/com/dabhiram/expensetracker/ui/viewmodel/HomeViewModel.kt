@@ -53,12 +53,32 @@ class HomeViewModel(private val repository: TransactionRepository) : ViewModel()
         viewModelScope.launch { repository.deleteTransaction(transaction) }
     }
 
-    fun editTransaction(transaction: Transaction, newAmount: BigDecimal, newCategory: String) {
+    fun editTransaction(
+        transaction: Transaction,
+        newAmount: BigDecimal,
+        newCategory: String,
+        splitMyShare: BigDecimal? = null,
+        splitPeopleCount: Int = 0
+    ) {
         viewModelScope.launch {
             repository.updateTransaction(
                 transaction.copy(
                     amount = newAmount.toPlainString(),
                     category = newCategory,
+                    categorizedBy = CategorizedBy.USER,
+                    splitMyShare = splitMyShare?.toPlainString(),
+                    splitPeopleCount = splitPeopleCount
+                )
+            )
+        }
+    }
+
+    fun applySplit(transaction: Transaction, myShare: BigDecimal, peopleCount: Int) {
+        viewModelScope.launch {
+            repository.updateTransaction(
+                transaction.copy(
+                    splitMyShare = myShare.toPlainString(),
+                    splitPeopleCount = peopleCount,
                     categorizedBy = CategorizedBy.USER
                 )
             )
@@ -89,34 +109,31 @@ class HomeViewModel(private val repository: TransactionRepository) : ViewModel()
         }
     }
 
-    fun splitTransaction(transaction: Transaction, myContribution: BigDecimal, paidOnBehalfTotal: BigDecimal, peopleCount: Int) {
-        viewModelScope.launch { repository.splitTransaction(transaction, myContribution, paidOnBehalfTotal, peopleCount) }
-    }
-
     fun addTransactionWithSplit(
         amount: BigDecimal,
         recipientName: String,
         recipientVpa: String?,
         category: String,
         timestamp: Long,
-        myContribution: BigDecimal,
-        paidOnBehalfTotal: BigDecimal,
+        myShare: BigDecimal,
         peopleCount: Int
     ) {
         viewModelScope.launch {
-            val transaction = Transaction(
-                id = "MANUAL_${timestamp}_${amount.toPlainString()}_${System.nanoTime()}",
-                amount = amount.toPlainString(),
-                recipientName = recipientName,
-                recipientVpa = recipientVpa?.takeIf { it.isNotBlank() },
-                sourceApp = SourceApp.MANUAL,
-                timestamp = timestamp,
-                category = category,
-                categorizedBy = CategorizedBy.USER,
-                rawDump = "Added manually"
+            repository.insert(
+                Transaction(
+                    id = "MANUAL_${timestamp}_${amount.toPlainString()}_${System.nanoTime()}",
+                    amount = amount.toPlainString(),
+                    recipientName = recipientName,
+                    recipientVpa = recipientVpa?.takeIf { it.isNotBlank() },
+                    sourceApp = SourceApp.MANUAL,
+                    timestamp = timestamp,
+                    category = category,
+                    categorizedBy = CategorizedBy.USER,
+                    rawDump = "Added manually",
+                    splitMyShare = myShare.toPlainString(),
+                    splitPeopleCount = peopleCount
+                )
             )
-            repository.insert(transaction)
-            repository.splitTransaction(transaction, myContribution, paidOnBehalfTotal, peopleCount)
         }
     }
 

@@ -125,39 +125,7 @@ class TransactionRepository(private val db: AppDatabase) {
     suspend fun getTransactionsPaged(startMs: Long, endMs: Long, page: Int, pageSize: Int): List<Transaction> =
         db.transactionDao().getRangePaged(startMs, endMs, pageSize, page * pageSize)
 
-    suspend fun splitTransaction(
-        transaction: Transaction,
-        myContribution: java.math.BigDecimal,
-        paidOnBehalfTotal: java.math.BigDecimal,
-        peopleCount: Int
-    ) {
-        val perPerson = paidOnBehalfTotal.divide(
-            java.math.BigDecimal(peopleCount), 2, java.math.RoundingMode.HALF_UP
-        )
-        updateTransaction(
-            transaction.copy(
-                amount = (myContribution + perPerson).toPlainString(),
-                categorizedBy = com.dabhiram.expensetracker.data.model.CategorizedBy.USER
-            )
-        )
-        repeat(peopleCount - 1) { i ->
-            insert(
-                Transaction(
-                    id = "SPLIT_${transaction.id}_${i}_${System.nanoTime()}",
-                    amount = perPerson.toPlainString(),
-                    recipientName = transaction.recipientName,
-                    recipientVpa = transaction.recipientVpa,
-                    sourceApp = transaction.sourceApp,
-                    timestamp = transaction.timestamp + i,
-                    category = com.dabhiram.expensetracker.data.model.CATEGORY_PAID_ON_BEHALF,
-                    categorizedBy = com.dabhiram.expensetracker.data.model.CategorizedBy.USER,
-                    rawDump = "Split from ${transaction.id}"
-                )
-            )
-        }
-    }
-
-    suspend fun getRecentCategorized(days: Int = 3, limit: Int = 30): List<Transaction> {
+suspend fun getRecentCategorized(days: Int = 3, limit: Int = 30): List<Transaction> {
         val since = System.currentTimeMillis() - days * 24L * 60 * 60 * 1000
         return db.transactionDao().getRecentCategorized(since, limit)
     }

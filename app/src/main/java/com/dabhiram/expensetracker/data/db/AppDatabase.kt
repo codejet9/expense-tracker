@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 
 @Database(
     entities = [Transaction::class, VpaCategory::class, MerchantRule::class, Category::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -50,6 +50,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transactions ADD COLUMN splitMyShare TEXT")
+                db.execSQL("ALTER TABLE transactions ADD COLUMN splitPeopleCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE transactions SET category = 'Lent' WHERE category = 'Paid on Behalf'")
+                db.execSQL("UPDATE categories SET name = 'Lent' WHERE name = 'Paid on Behalf'")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 Room.databaseBuilder(
@@ -57,7 +66,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "expense_tracker.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -88,7 +97,7 @@ private fun defaultCategories(): List<String> = listOf(
     "Entertainment",
     "Shopping",
     "Personal Transfers",
-    "Paid on Behalf",
+    "Lent",
     "Bills & Rent",
     "Health",
     "Education",

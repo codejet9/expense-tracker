@@ -6,8 +6,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.dabhiram.expensetracker.data.InsightsCache
 import com.dabhiram.expensetracker.data.TransactionEventBus
+import com.dabhiram.expensetracker.data.model.CATEGORY_LENT
 import com.dabhiram.expensetracker.data.model.CategorizedBy
 import com.dabhiram.expensetracker.data.model.Transaction
+import com.dabhiram.expensetracker.data.model.isSplit
+import com.dabhiram.expensetracker.data.model.netAmount
+import com.dabhiram.expensetracker.data.model.reimbursableAmount
 import com.dabhiram.expensetracker.data.repository.TransactionRepository
 import com.dabhiram.expensetracker.llm.ApiKeyManager
 import com.dabhiram.expensetracker.llm.LlmSpendingAnalyzer
@@ -164,17 +168,33 @@ class ReportsViewModel(
         viewModelScope.launch { repository.deleteTransaction(transaction) }
     }
 
-    fun splitTransaction(transaction: Transaction, myContribution: BigDecimal, paidOnBehalfTotal: BigDecimal, peopleCount: Int) {
-        viewModelScope.launch { repository.splitTransaction(transaction, myContribution, paidOnBehalfTotal, peopleCount) }
+    fun applySplit(transaction: Transaction, myShare: BigDecimal, peopleCount: Int) {
+        viewModelScope.launch {
+            repository.updateTransaction(
+                transaction.copy(
+                    splitMyShare = myShare.toPlainString(),
+                    splitPeopleCount = peopleCount,
+                    categorizedBy = CategorizedBy.USER
+                )
+            )
+        }
     }
 
-    fun editTransaction(transaction: Transaction, newAmount: BigDecimal, newCategory: String) {
+    fun editTransaction(
+        transaction: Transaction,
+        newAmount: BigDecimal,
+        newCategory: String,
+        splitMyShare: BigDecimal? = null,
+        splitPeopleCount: Int = 0
+    ) {
         viewModelScope.launch {
             repository.updateTransaction(
                 transaction.copy(
                     amount = newAmount.toPlainString(),
                     category = newCategory,
-                    categorizedBy = CategorizedBy.USER
+                    categorizedBy = CategorizedBy.USER,
+                    splitMyShare = splitMyShare?.toPlainString(),
+                    splitPeopleCount = splitPeopleCount
                 )
             )
         }
@@ -270,12 +290,38 @@ class ReportsViewModel(
 
         val df = DecimalFormat("#,##,##0.##")
         val total = txns.totalAmount()
-        val reimbursable = txns.filter { it.category == "Paid on Behalf" }.totalAmount()
+
+        // Reimbursable = Case 1 (Lent category, non-split) + Case 2 (split metadata)
+        val reimbursable = txns.fold(BigDecimal.ZERO) { acc, t ->
+            acc + when {
+                t.category == CATEGORY_LENT && !t.isSplit ->
+                    runCatching { BigDecimal(t.amount) }.getOrDefault(BigDecimal.ZERO)
+                else -> t.reimbursableAmount
+            }
+        }
         val net = total - reimbursable
 
-        val breakdown = txns
-            .groupBy { it.category }
-            .map { (cat, list) -> CategorySpend(cat, list.totalAmount(), list.size) }
+        // For split txns: netAmount → actual category, reimbursableAmount → Lent slice.
+        val effectiveBreakdown = mutableMapOf<String, Pair<BigDecimal, Int>>()
+        for (t in txns) {
+            val tAmount = runCatching { BigDecimal(t.amount) }.getOrDefault(BigDecimal.ZERO)
+            if (t.isSplit) {
+                val cat = t.category
+                val prev = effectiveBreakdown[cat] ?: (BigDecimal.ZERO to 0)
+                effectiveBreakdown[cat] = (prev.first + t.netAmount) to (prev.second + 1)
+                val reimb = t.reimbursableAmount
+                if (reimb > BigDecimal.ZERO) {
+                    val prevL = effectiveBreakdown[CATEGORY_LENT] ?: (BigDecimal.ZERO to 0)
+                    effectiveBreakdown[CATEGORY_LENT] = (prevL.first + reimb) to (prevL.second + 1)
+                }
+            } else {
+                val cat = t.category
+                val prev = effectiveBreakdown[cat] ?: (BigDecimal.ZERO to 0)
+                effectiveBreakdown[cat] = (prev.first + tAmount) to (prev.second + 1)
+            }
+        }
+        val breakdown = effectiveBreakdown
+            .map { (cat, pair) -> CategorySpend(cat, pair.first, pair.second) }
             .sortedByDescending { it.amount }
 
         val topMerchants = txns

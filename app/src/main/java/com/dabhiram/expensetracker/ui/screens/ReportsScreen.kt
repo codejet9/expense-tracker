@@ -170,9 +170,11 @@ fun ReportsScreen(repository: TransactionRepository) {
                         transaction = transaction,
                         categories = categories,
                         onDelete = { vm.deleteTransaction(transaction) },
-                        onEdit = { newAmount, newCategory -> vm.editTransaction(transaction, newAmount, newCategory) },
-                        onSplit = { myContrib, paidOnBehalf, peopleCount ->
-                            vm.splitTransaction(transaction, myContrib, paidOnBehalf, peopleCount)
+                        onEdit = { newAmount, newCategory, splitMyShare, splitPeopleCount ->
+                            vm.editTransaction(transaction, newAmount, newCategory, splitMyShare, splitPeopleCount)
+                        },
+                        onSplit = { myShare, peopleCount ->
+                            vm.applySplit(transaction, myShare, peopleCount)
                         }
                     )
                     HorizontalDivider()

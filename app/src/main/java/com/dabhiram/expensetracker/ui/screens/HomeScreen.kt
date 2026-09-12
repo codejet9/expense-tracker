@@ -40,8 +40,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.graphics.Color
-import com.dabhiram.expensetracker.data.model.CATEGORY_PAID_ON_BEHALF
+import com.dabhiram.expensetracker.data.model.CATEGORY_LENT
 import com.dabhiram.expensetracker.data.model.CATEGORY_UNCATEGORIZED
+import com.dabhiram.expensetracker.data.model.isSplit
+import com.dabhiram.expensetracker.data.model.netAmount
+import com.dabhiram.expensetracker.data.model.reimbursableAmount
 import com.dabhiram.expensetracker.data.model.SourceApp
 import com.dabhiram.expensetracker.data.model.Transaction
 import com.dabhiram.expensetracker.data.repository.TransactionRepository
@@ -118,9 +121,11 @@ fun HomeScreen(repository: TransactionRepository) {
                         transaction = transaction,
                         categories = categories,
                         onDelete = { vm.deleteTransaction(transaction) },
-                        onEdit = { newAmount, newCategory -> vm.editTransaction(transaction, newAmount, newCategory) },
-                        onSplit = { myContrib, paidOnBehalf, peopleCount ->
-                            vm.splitTransaction(transaction, myContrib, paidOnBehalf, peopleCount)
+                        onEdit = { newAmount, newCategory, splitMyShare, splitPeopleCount ->
+                            vm.editTransaction(transaction, newAmount, newCategory, splitMyShare, splitPeopleCount)
+                        },
+                        onSplit = { myShare, peopleCount ->
+                            vm.applySplit(transaction, myShare, peopleCount)
                         }
                     )
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -137,8 +142,8 @@ fun HomeScreen(repository: TransactionRepository) {
                 vm.addTransaction(amount, recipientName, recipientVpa, category, timestamp)
                 showAddDialog = false
             },
-            onSaveWithSplit = { amount, recipientName, recipientVpa, category, timestamp, myContrib, paidOnBehalf, peopleCount ->
-                vm.addTransactionWithSplit(amount, recipientName, recipientVpa, category, timestamp, myContrib, paidOnBehalf, peopleCount)
+            onSaveWithSplit = { amount, recipientName, recipientVpa, category, timestamp, myShare, peopleCount ->
+                vm.addTransactionWithSplit(amount, recipientName, recipientVpa, category, timestamp, myShare, peopleCount)
                 showAddDialog = false
             }
         )
@@ -161,7 +166,7 @@ private fun AddTransactionDialog(
     categories: List<String>,
     onDismiss: () -> Unit,
     onSave: (BigDecimal, String, String?, String, Long) -> Unit,
-    onSaveWithSplit: ((BigDecimal, String, String?, String, Long, BigDecimal, BigDecimal, Int) -> Unit)? = null
+    onSaveWithSplit: ((BigDecimal, String, String?, String, Long, BigDecimal, Int) -> Unit)? = null
 ) {
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
     val defaultPeopleAdd = ApiKeyManager.getDefaultSplitPeople(LocalContext.current)
@@ -175,16 +180,15 @@ private fun AddTransactionDialog(
 
     var splitExpanded by remember { mutableStateOf(false) }
     var myShareText by remember { mutableStateOf("") }
-    var paidOnBehalfText by remember { mutableStateOf("") }
     var peopleCount by remember { mutableIntStateOf(defaultPeopleAdd) }
 
     val totalAmount = amountText.toBigDecimalOrNull() ?: BigDecimal.ZERO
     val myShare = myShareText.toBigDecimalOrNull()
-    val paidOnBehalf = paidOnBehalfText.toBigDecimalOrNull()
-    val sumMatchesTotal = myShare != null && paidOnBehalf != null && totalAmount > BigDecimal.ZERO &&
-        (myShare + paidOnBehalf).compareTo(totalAmount) == 0
-    val perPerson = if (paidOnBehalf != null && peopleCount >= 2)
-        runCatching { paidOnBehalf.divide(BigDecimal(peopleCount), 2, java.math.RoundingMode.HALF_UP) }.getOrNull()
+    val splitValid = myShare != null && totalAmount > BigDecimal.ZERO &&
+        myShare > BigDecimal.ZERO && myShare < totalAmount
+    val paidOnBehalfTotal = if (splitValid) totalAmount - myShare!! else null
+    val perPerson = if (paidOnBehalfTotal != null && peopleCount >= 2)
+        runCatching { paidOnBehalfTotal.divide(BigDecimal(peopleCount), 2, java.math.RoundingMode.HALF_UP) }.getOrNull()
     else null
 
     var selectedDateMidnight by remember { mutableStateOf(startOfTodayMillis()) }
@@ -302,14 +306,12 @@ private fun AddTransactionDialog(
                             df = df,
                             myShareText = myShareText,
                             onMyShareChange = { myShareText = it },
-                            paidOnBehalfText = paidOnBehalfText,
-                            onPaidOnBehalfChange = { paidOnBehalfText = it },
                             peopleCount = peopleCount,
                             onPeopleCountChange = { peopleCount = it },
                             myShare = myShare,
-                            paidOnBehalf = paidOnBehalf,
-                            sumMatchesTotal = sumMatchesTotal,
-                            perPerson = perPerson
+                            splitValid = splitValid,
+                            perPerson = perPerson,
+                            paidOnBehalfTotal = paidOnBehalfTotal
                         )
                     }
                 }
@@ -328,14 +330,14 @@ private fun AddTransactionDialog(
                         set(Calendar.MINUTE, now.get(Calendar.MINUTE))
                         set(Calendar.SECOND, now.get(Calendar.SECOND))
                     }.timeInMillis
-                    if (splitExpanded && sumMatchesTotal && myShare != null && paidOnBehalf != null) {
-                        onSaveWithSplit?.invoke(amount, recipientText.trim(), vpaText.trim(), category, timestamp, myShare, paidOnBehalf, peopleCount)
+                    if (splitExpanded && splitValid && myShare != null) {
+                        onSaveWithSplit?.invoke(amount, recipientText.trim(), vpaText.trim(), category, timestamp, myShare, peopleCount)
                     } else {
                         onSave(amount, recipientText.trim(), vpaText.trim(), category, timestamp)
                     }
                 },
                 enabled = amountText.toBigDecimalOrNull() != null && recipientText.isNotBlank() &&
-                    (!splitExpanded || sumMatchesTotal)
+                    (!splitExpanded || splitValid)
             ) { Text(if (splitExpanded && onSaveWithSplit != null) "Save & Split" else "Save") }
         },
         dismissButton = {
@@ -553,8 +555,8 @@ fun SwipeToDeleteTransactionRow(
     transaction: Transaction,
     categories: List<String>,
     onDelete: () -> Unit,
-    onEdit: (BigDecimal, String) -> Unit,
-    onSplit: ((myContribution: BigDecimal, paidOnBehalfTotal: BigDecimal, peopleCount: Int) -> Unit)? = null
+    onEdit: (newAmount: BigDecimal, newCategory: String, splitMyShare: BigDecimal?, splitPeopleCount: Int) -> Unit,
+    onSplit: ((myShare: BigDecimal, peopleCount: Int) -> Unit)? = null
 ) {
     var showEditDialog by remember(transaction.id) { mutableStateOf(false) }
     var showSplitDialog by remember(transaction.id) { mutableStateOf(false) }
@@ -574,15 +576,9 @@ fun SwipeToDeleteTransactionRow(
             transaction = transaction,
             categories = categories,
             onDismiss = { showEditDialog = false },
-            onSave = { newAmount, newCategory ->
-                onEdit(newAmount, newCategory)
+            onSave = { newAmount, newCategory, splitMyShare, splitPeopleCount ->
+                onEdit(newAmount, newCategory, splitMyShare, splitPeopleCount)
                 showEditDialog = false
-            },
-            onSplit = onSplit?.let { splitFn ->
-                { myContrib, paidOnBehalf, count ->
-                    splitFn(myContrib, paidOnBehalf, count)
-                    showEditDialog = false
-                }
             }
         )
     }
@@ -591,8 +587,8 @@ fun SwipeToDeleteTransactionRow(
         SplitExpenseDialog(
             transaction = transaction,
             onDismiss = { showSplitDialog = false },
-            onSplit = { myContrib, paidOnBehalf, peopleCount ->
-                onSplit(myContrib, paidOnBehalf, peopleCount)
+            onSplit = { myShare, peopleCount ->
+                onSplit(myShare, peopleCount)
                 showSplitDialog = false
             }
         )
@@ -605,14 +601,12 @@ private fun SplitFields(
     df: DecimalFormat,
     myShareText: String,
     onMyShareChange: (String) -> Unit,
-    paidOnBehalfText: String,
-    onPaidOnBehalfChange: (String) -> Unit,
     peopleCount: Int,
     onPeopleCountChange: (Int) -> Unit,
     myShare: BigDecimal?,
-    paidOnBehalf: BigDecimal?,
-    sumMatchesTotal: Boolean,
-    perPerson: BigDecimal?
+    splitValid: Boolean,
+    perPerson: BigDecimal?,
+    paidOnBehalfTotal: BigDecimal?
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Surface(
@@ -635,18 +629,16 @@ private fun SplitFields(
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
             ),
-            isError = myShareText.isNotEmpty() && myShare == null
+            isError = myShareText.isNotEmpty() && (myShare == null || myShare >= totalAmount)
         )
-        OutlinedTextField(
-            value = paidOnBehalfText,
-            onValueChange = onPaidOnBehalfChange,
-            label = { Text("Paid on behalf (shared)") },
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
-            ),
-            isError = paidOnBehalfText.isNotEmpty() && paidOnBehalf == null
-        )
+        if (paidOnBehalfTotal != null) {
+            Text(
+                "Lent to group: ₹${df.format(paidOnBehalfTotal)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -683,23 +675,24 @@ private fun SplitFields(
                 Icon(Icons.Default.Add, contentDescription = "More")
             }
         }
-        if (!sumMatchesTotal && myShare != null && paidOnBehalf != null) {
+        if (myShareText.isNotEmpty() && myShare != null && myShare >= totalAmount && totalAmount > BigDecimal.ZERO) {
             Text(
-                "My share + paid on behalf must equal ₹${df.format(totalAmount)}",
+                "My share must be less than ₹${df.format(totalAmount)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.error
             )
         }
-        if (sumMatchesTotal && perPerson != null) {
+        if (splitValid && perPerson != null && myShare != null) {
             Surface(
                 color = MaterialTheme.colorScheme.secondaryContainer,
                 shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    val myTotal = myShare!! + perPerson
-                    Text("Your entry: ₹${df.format(myTotal)}", style = MaterialTheme.typography.bodySmall)
-                    Text("${peopleCount - 1} × Paid on Behalf: ₹${df.format(perPerson)} each", style = MaterialTheme.typography.bodySmall)
+                    val myTotal = myShare + perPerson
+                    val owed = paidOnBehalfTotal!! - perPerson
+                    Text("Your entry: ₹${df.format(myTotal)} (₹${df.format(myShare)} + ₹${df.format(perPerson)})", style = MaterialTheme.typography.bodySmall)
+                    Text("₹${df.format(owed)} owed (₹${df.format(perPerson)} × ${peopleCount - 1})", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -712,28 +705,27 @@ private fun EditTransactionDialog(
     transaction: Transaction,
     categories: List<String>,
     onDismiss: () -> Unit,
-    onSave: (BigDecimal, String) -> Unit,
-    onSplit: ((myContribution: BigDecimal, paidOnBehalfTotal: BigDecimal, peopleCount: Int) -> Unit)? = null
+    onSave: (newAmount: BigDecimal, newCategory: String, splitMyShare: BigDecimal?, splitPeopleCount: Int) -> Unit
 ) {
     val df = DecimalFormat("#,##,##0.##")
-    val totalAmount = runCatching { transaction.amount.toBigDecimal() }.getOrDefault(BigDecimal.ZERO)
     val defaultPeopleEdit = ApiKeyManager.getDefaultSplitPeople(LocalContext.current)
 
     var amountText by remember { mutableStateOf(transaction.amount) }
     var category by remember { mutableStateOf(transaction.category) }
     var showCategoryMenu by remember { mutableStateOf(false) }
 
-    var splitExpanded by remember { mutableStateOf(false) }
-    var myShareText by remember { mutableStateOf("") }
-    var paidOnBehalfText by remember { mutableStateOf("") }
-    var peopleCount by remember { mutableIntStateOf(defaultPeopleEdit) }
+    // Prefill split from existing split metadata
+    var splitExpanded by remember { mutableStateOf(transaction.isSplit) }
+    var myShareText by remember { mutableStateOf(transaction.splitMyShare ?: "") }
+    var peopleCount by remember { mutableIntStateOf(if (transaction.splitPeopleCount >= 2) transaction.splitPeopleCount else defaultPeopleEdit) }
 
+    val totalAmount = amountText.toBigDecimalOrNull() ?: BigDecimal.ZERO
     val myShare = myShareText.toBigDecimalOrNull()
-    val paidOnBehalf = paidOnBehalfText.toBigDecimalOrNull()
-    val sumMatchesTotal = myShare != null && paidOnBehalf != null &&
-        (myShare + paidOnBehalf).compareTo(totalAmount) == 0
-    val perPerson = if (paidOnBehalf != null && peopleCount >= 2)
-        runCatching { paidOnBehalf.divide(BigDecimal(peopleCount), 2, java.math.RoundingMode.HALF_UP) }.getOrNull()
+    val splitValid = myShare != null && totalAmount > BigDecimal.ZERO &&
+        myShare > BigDecimal.ZERO && myShare < totalAmount
+    val paidOnBehalfTotal = if (splitValid) totalAmount - myShare!! else null
+    val perPerson = if (paidOnBehalfTotal != null && peopleCount >= 2)
+        runCatching { paidOnBehalfTotal.divide(BigDecimal(peopleCount), 2, java.math.RoundingMode.HALF_UP) }.getOrNull()
     else null
 
     AlertDialog(
@@ -785,63 +777,61 @@ private fun EditTransactionDialog(
                     }
                 }
 
-                if (onSplit != null) {
-                    HorizontalDivider()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { splitExpanded = !splitExpanded }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.CallSplit,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "Split details",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Icon(
-                            if (splitExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (splitExpanded) {
-                        SplitFields(
-                            totalAmount = totalAmount,
-                            df = df,
-                            myShareText = myShareText,
-                            onMyShareChange = { myShareText = it },
-                            paidOnBehalfText = paidOnBehalfText,
-                            onPaidOnBehalfChange = { paidOnBehalfText = it },
-                            peopleCount = peopleCount,
-                            onPeopleCountChange = { peopleCount = it },
-                            myShare = myShare,
-                            paidOnBehalf = paidOnBehalf,
-                            sumMatchesTotal = sumMatchesTotal,
-                            perPerson = perPerson
-                        )
-                    }
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { splitExpanded = !splitExpanded }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.CallSplit,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Split details",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        if (splitExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (splitExpanded) {
+                    SplitFields(
+                        totalAmount = totalAmount,
+                        df = df,
+                        myShareText = myShareText,
+                        onMyShareChange = { myShareText = it },
+                        peopleCount = peopleCount,
+                        onPeopleCountChange = { peopleCount = it },
+                        myShare = myShare,
+                        splitValid = splitValid,
+                        perPerson = perPerson,
+                        paidOnBehalfTotal = paidOnBehalfTotal
+                    )
                 }
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (splitExpanded && sumMatchesTotal && myShare != null && paidOnBehalf != null) {
-                        onSplit?.invoke(myShare, paidOnBehalf, peopleCount)
+                    val amount = amountText.toBigDecimalOrNull() ?: return@TextButton
+                    if (splitExpanded && splitValid && myShare != null) {
+                        onSave(amount, category, myShare, peopleCount)
                     } else {
-                        amountText.toBigDecimalOrNull()?.let { onSave(it, category) }
+                        onSave(amount, category, null, 0)
                     }
                 },
-                enabled = if (splitExpanded) sumMatchesTotal else amountText.toBigDecimalOrNull() != null
-            ) { Text(if (splitExpanded && onSplit != null) "Split" else "Save") }
+                enabled = if (splitExpanded) splitValid && amountText.toBigDecimalOrNull() != null
+                          else amountText.toBigDecimalOrNull() != null
+            ) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
@@ -853,142 +843,44 @@ private fun EditTransactionDialog(
 private fun SplitExpenseDialog(
     transaction: Transaction,
     onDismiss: () -> Unit,
-    onSplit: (myContribution: BigDecimal, paidOnBehalfTotal: BigDecimal, peopleCount: Int) -> Unit
+    onSplit: (myShare: BigDecimal, peopleCount: Int) -> Unit
 ) {
     val df = DecimalFormat("#,##,##0.##")
     val totalAmount = runCatching { transaction.amount.toBigDecimal() }.getOrDefault(BigDecimal.ZERO)
-    val totalDisplay = "₹${df.format(totalAmount)}"
     val defaultPeopleSwipe = ApiKeyManager.getDefaultSplitPeople(LocalContext.current)
 
-    var myShareText by remember { mutableStateOf("") }
-    var paidOnBehalfText by remember { mutableStateOf("") }
-    var peopleCount by remember { mutableIntStateOf(defaultPeopleSwipe) }
+    var myShareText by remember { mutableStateOf(transaction.splitMyShare ?: "") }
+    var peopleCount by remember { mutableIntStateOf(if (transaction.splitPeopleCount >= 2) transaction.splitPeopleCount else defaultPeopleSwipe) }
 
     val myShare = myShareText.toBigDecimalOrNull()
-    val paidOnBehalf = paidOnBehalfText.toBigDecimalOrNull()
-    val sumMatchesTotal = myShare != null && paidOnBehalf != null &&
-        (myShare + paidOnBehalf).compareTo(totalAmount) == 0
-
-    val perPerson = if (paidOnBehalf != null && peopleCount >= 2)
-        runCatching { paidOnBehalf.divide(BigDecimal(peopleCount), 2, java.math.RoundingMode.HALF_UP) }.getOrNull()
+    val splitValid = myShare != null && totalAmount > BigDecimal.ZERO &&
+        myShare > BigDecimal.ZERO && myShare < totalAmount
+    val paidOnBehalfTotal = if (splitValid) totalAmount - myShare!! else null
+    val perPerson = if (paidOnBehalfTotal != null && peopleCount >= 2)
+        runCatching { paidOnBehalfTotal.divide(BigDecimal(peopleCount), 2, java.math.RoundingMode.HALF_UP) }.getOrNull()
     else null
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Split expense") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        "Total paid: $totalDisplay",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                OutlinedTextField(
-                    value = myShareText,
-                    onValueChange = { myShareText = it },
-                    label = { Text("My personal share") },
-                    placeholder = { Text("Amount only yours") },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
-                    ),
-                    isError = myShareText.isNotEmpty() && myShare == null
-                )
-
-                OutlinedTextField(
-                    value = paidOnBehalfText,
-                    onValueChange = { paidOnBehalfText = it },
-                    label = { Text("Paid on behalf (shared)") },
-                    placeholder = { Text("Amount paid for the group") },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
-                    ),
-                    isError = paidOnBehalfText.isNotEmpty() && paidOnBehalf == null
-                )
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        Icons.Default.Person,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        "People (including you)",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = { if (peopleCount > 2) peopleCount-- },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(Icons.Default.Remove, contentDescription = "Fewer people")
-                    }
-                    Text(
-                        "$peopleCount",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.widthIn(min = 24.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    IconButton(
-                        onClick = { peopleCount++ },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "More people")
-                    }
-                }
-
-                if (!sumMatchesTotal && myShare != null && paidOnBehalf != null) {
-                    Text(
-                        "My share + paid on behalf must equal $totalDisplay",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-
-                if (sumMatchesTotal && perPerson != null) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        shape = MaterialTheme.shapes.small,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                            val myTotal = myShare!! + perPerson
-                            Text(
-                                "Your entry: ₹${df.format(myTotal)}",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Text(
-                                "${peopleCount - 1} × Paid on Behalf: ₹${df.format(perPerson)} each",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                }
-            }
+            SplitFields(
+                totalAmount = totalAmount,
+                df = df,
+                myShareText = myShareText,
+                onMyShareChange = { myShareText = it },
+                peopleCount = peopleCount,
+                onPeopleCountChange = { peopleCount = it },
+                myShare = myShare,
+                splitValid = splitValid,
+                perPerson = perPerson,
+                paidOnBehalfTotal = paidOnBehalfTotal
+            )
         },
         confirmButton = {
             TextButton(
-                onClick = {
-                    if (myShare != null && paidOnBehalf != null && sumMatchesTotal) {
-                        onSplit(myShare, paidOnBehalf, peopleCount)
-                    }
-                },
-                enabled = sumMatchesTotal
+                onClick = { if (splitValid && myShare != null) onSplit(myShare, peopleCount) },
+                enabled = splitValid
             ) { Text("Split") }
         },
         dismissButton = {
@@ -1107,10 +999,8 @@ fun SwipeToDeleteRow(
 @Composable
 fun TransactionRow(transaction: Transaction) {
     val df = DecimalFormat("#,##,##0.##")
-    val amount = runCatching {
-        "₹${df.format(transaction.amount.toBigDecimal())}"
-    }.getOrDefault("₹${transaction.amount}")
-
+    val displayAmount = "₹${df.format(transaction.netAmount)}"
+    val reimbursable = transaction.reimbursableAmount
     val timeStr = SimpleDateFormat("h:mm a", Locale.getDefault())
         .format(Date(transaction.timestamp))
 
@@ -1142,17 +1032,25 @@ fun TransactionRow(transaction: Transaction) {
                         modifier = Modifier.size(14.dp)
                     )
                     Text(
-                        amount,
+                        displayAmount,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
-                Text(
-                    transaction.sourceApp.displayName(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (reimbursable > java.math.BigDecimal.ZERO) {
+                    Text(
+                        "₹${df.format(reimbursable)} owed",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFE65100)
+                    )
+                } else {
+                    Text(
+                        transaction.sourceApp.displayName(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     )
@@ -1161,17 +1059,17 @@ fun TransactionRow(transaction: Transaction) {
 @Composable
 fun CategoryChip(category: String) {
     val containerColor = when (category) {
-        CATEGORY_PAID_ON_BEHALF -> Color(0xFFFFF8E1)
+        CATEGORY_LENT -> Color(0xFFFFF8E1)
         CATEGORY_UNCATEGORIZED -> MaterialTheme.colorScheme.errorContainer
         else -> MaterialTheme.colorScheme.secondaryContainer
     }
     val contentColor = when (category) {
-        CATEGORY_PAID_ON_BEHALF -> Color(0xFFE65100)
+        CATEGORY_LENT -> Color(0xFFE65100)
         CATEGORY_UNCATEGORIZED -> MaterialTheme.colorScheme.onErrorContainer
         else -> MaterialTheme.colorScheme.onSecondaryContainer
     }
     val label = when (category) {
-        CATEGORY_PAID_ON_BEHALF -> "↩ $category"
+        CATEGORY_LENT -> "↩ $category"
         else -> category
     }
     Surface(

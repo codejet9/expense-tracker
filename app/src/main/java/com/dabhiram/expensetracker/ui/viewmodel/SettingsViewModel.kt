@@ -114,7 +114,7 @@ class SettingsViewModel(
                 Transaction("SEED006", "650.00",  "Blinkit",              "blinkit@icici",        SourceApp.GPAY,    now - 24*hour, "Groceries",         CategorizedBy.AUTO_MERCHANT, "seed"),
                 Transaction("SEED007", "180.00",  "Unknown Merchant",     "qrcode1234@paytm",     SourceApp.PHONEPE, now - 26*hour, "Uncategorized",     CategorizedBy.UNRESOLVED,    "seed"),
                 Transaction("SEED008", "12000.00","BESCOM",               "bescom@sbi",           SourceApp.GPAY,    now - 48*hour, "Utilities",         CategorizedBy.AUTO_MERCHANT, "seed"),
-                Transaction("SEED009", "800.00",  "Priya Lunch",          "9988776655@oksbi",     SourceApp.GPAY,    now - 2*hour,  "Paid on Behalf",    CategorizedBy.USER,          "seed")
+                Transaction("SEED009", "800.00",  "Priya Lunch",          "9988776655@oksbi",     SourceApp.GPAY,    now - 2*hour,  "Lent",              CategorizedBy.USER,          "seed")
             )
             testRows.forEach { repository.insert(it) }
         }
