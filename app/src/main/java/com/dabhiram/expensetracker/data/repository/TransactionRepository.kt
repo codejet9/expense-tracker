@@ -17,6 +17,7 @@ class TransactionRepository(private val db: AppDatabase) {
     val uncategorizedCount: Flow<Int> = db.transactionDao().getUncategorizedCountFlow()
     val merchantRules: Flow<List<MerchantRule>> = db.merchantRuleDao().getAllFlow()
     val categories: Flow<List<String>> = db.categoryDao().getAllFlow().map { list -> list.map { it.name } }
+    val allCategoriesFlow: Flow<List<Category>> = db.categoryDao().getAllFlow()
 
     fun todayTransactions(): Flow<List<Transaction>> {
         val startOfDay = Calendar.getInstance().apply {
@@ -132,4 +133,7 @@ suspend fun getRecentCategorized(days: Int = 3, limit: Int = 30): List<Transacti
 
     suspend fun getByCategory(category: String): List<Transaction> =
         db.transactionDao().getByCategory(category)
+
+    suspend fun updateCategoryBudget(name: String, budget: String?) =
+        db.categoryDao().updateBudget(name, budget)
 }

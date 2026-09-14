@@ -2,14 +2,23 @@ package com.dabhiram.expensetracker.ui.screens
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Remove
@@ -37,6 +46,7 @@ import com.dabhiram.expensetracker.data.repository.TransactionRepository
 import com.dabhiram.expensetracker.ui.viewmodel.SettingsViewModel
 
 private const val MERCHANT_RULES_PAGE_SIZE = 10
+private const val BUDGET_PAGE_SIZE = 5
 
 @Composable
 fun SettingsScreen(
@@ -46,6 +56,7 @@ fun SettingsScreen(
     val vm: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(repository))
     val rules by vm.merchantRules.collectAsState()
     val categories by vm.categories.collectAsState()
+    val categoriesWithBudgets by vm.categoriesWithBudgets.collectAsState()
     val openAiKey by vm.openAiKey.collectAsState()
     val groqKey by vm.groqKey.collectAsState()
     val geminiKey by vm.geminiKey.collectAsState()
@@ -57,6 +68,7 @@ fun SettingsScreen(
 
     var showAddRuleDialog by remember { mutableStateOf(false) }
     var exportMessage by remember { mutableStateOf<String?>(null) }
+    var budgetPage by remember { mutableStateOf(0) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm.importFromCsv(context, it) { _, msg -> exportMessage = msg } }
     }
@@ -89,20 +101,34 @@ fun SettingsScreen(
             }
 
             item {
-                HowCaptureWorksCard()
+                CollapsibleSettingsCard(title = "How Transactions Get Captured") {
+                    HowCaptureWorksContent()
+                }
             }
 
             item {
-                AiProvidersCard(
-                    openAiKey = openAiKey,
-                    groqKey = groqKey,
-                    geminiKey = geminiKey,
-                    enabled = llmEnabled,
-                    onSaveOpenAiKey = { vm.saveOpenAiKey(context, it) },
-                    onSaveGroqKey = { vm.saveGroqKey(context, it) },
-                    onSaveGeminiKey = { vm.saveGeminiKey(context, it) },
-                    onToggle = { vm.setLlmEnabled(context, it) }
-                )
+                CollapsibleSettingsCard(
+                    title = "AI Categorization & API Keys",
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                ) {
+                    AiProvidersContent(
+                        openAiKey = openAiKey,
+                        groqKey = groqKey,
+                        geminiKey = geminiKey,
+                        enabled = llmEnabled,
+                        onSaveOpenAiKey = { vm.saveOpenAiKey(context, it) },
+                        onSaveGroqKey = { vm.saveGroqKey(context, it) },
+                        onSaveGeminiKey = { vm.saveGeminiKey(context, it) },
+                        onToggle = { vm.setLlmEnabled(context, it) }
+                    )
+                }
             }
 
             item {
@@ -154,56 +180,90 @@ fun SettingsScreen(
             }
 
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                val budgetPageCount = ((categoriesWithBudgets.size + BUDGET_PAGE_SIZE - 1) / BUDGET_PAGE_SIZE).coerceAtLeast(1)
+                LaunchedEffect(categoriesWithBudgets.size) {
+                    if (budgetPage >= budgetPageCount) budgetPage = (budgetPageCount - 1).coerceAtLeast(0)
+                }
+                CollapsibleSettingsCard(
+                    title = "Category Budgets",
+                    subtitle = "Monthly limits"
                 ) {
-                    Text(
-                        "Merchant Rules",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    IconButton(onClick = { showAddRuleDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add rule")
+                    val pagedCats = categoriesWithBudgets
+                        .drop(budgetPage * BUDGET_PAGE_SIZE)
+                        .take(BUDGET_PAGE_SIZE)
+
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        pagedCats.forEach { cat ->
+                            BudgetFieldRow(
+                                categoryName = cat.name,
+                                currentBudget = cat.budget,
+                                onSave = { vm.saveCategoryBudget(cat.name, it) }
+                            )
+                        }
+
+                        if (budgetPageCount > 1) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(
+                                    onClick = { budgetPage-- },
+                                    enabled = budgetPage > 0
+                                ) { Text("← Prev") }
+                                Text(
+                                    "Page ${budgetPage + 1} of $budgetPageCount",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                TextButton(
+                                    onClick = { budgetPage++ },
+                                    enabled = budgetPage < budgetPageCount - 1
+                                ) { Text("Next →") }
+                            }
+                        }
+
+                        Text(
+                            "Leave blank = no limit. Changes save automatically.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
 
             item {
-                Text(
-                    "These patterns are matched against the VPA or recipient name to auto-categorize payments.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+                CollapsibleSettingsCard(
+                    title = "Merchant Rules",
+                    trailingAction = {
+                        IconButton(onClick = { showAddRuleDialog = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "Add rule")
+                        }
+                    }
+                ) {
+                    val pageCount = ((rules.size + MERCHANT_RULES_PAGE_SIZE - 1) / MERCHANT_RULES_PAGE_SIZE).coerceAtLeast(1)
+                    val pagedRules = rules.drop(rulesPage * MERCHANT_RULES_PAGE_SIZE).take(MERCHANT_RULES_PAGE_SIZE)
 
-            val pageCount = ((rules.size + MERCHANT_RULES_PAGE_SIZE - 1) / MERCHANT_RULES_PAGE_SIZE).coerceAtLeast(1)
-            val pagedRules = rules.drop(rulesPage * MERCHANT_RULES_PAGE_SIZE).take(MERCHANT_RULES_PAGE_SIZE)
-
-            items(pagedRules, key = { it.pattern }) { rule ->
-                MerchantRuleItem(rule = rule, onDelete = { vm.deleteMerchantRule(rule) })
-            }
-
-            if (pageCount > 1) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(
-                            onClick = { rulesPage-- },
-                            enabled = rulesPage > 0
-                        ) { Text("Previous") }
+                    Column {
                         Text(
-                            "Page ${rulesPage + 1} of $pageCount",
-                            style = MaterialTheme.typography.bodySmall
+                            "Matched against VPA or recipient name to auto-categorize payments.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        TextButton(
-                            onClick = { rulesPage++ },
-                            enabled = rulesPage < pageCount - 1
-                        ) { Text("Next") }
+                        Spacer(Modifier.height(8.dp))
+                        pagedRules.forEach { rule ->
+                            MerchantRuleItem(rule = rule, onDelete = { vm.deleteMerchantRule(rule) })
+                        }
+                        if (pageCount > 1) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(onClick = { rulesPage-- }, enabled = rulesPage > 0) { Text("← Prev") }
+                                Text("Page ${rulesPage + 1} of $pageCount", style = MaterialTheme.typography.bodySmall)
+                                TextButton(onClick = { rulesPage++ }, enabled = rulesPage < pageCount - 1) { Text("Next →") }
+                            }
+                        }
                     }
                 }
             }
@@ -238,7 +298,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun AiProvidersCard(
+private fun AiProvidersContent(
     openAiKey: String,
     groqKey: String,
     geminiKey: String,
@@ -250,68 +310,58 @@ private fun AiProvidersCard(
 ) {
     val hasAnyKey = openAiKey.isNotBlank() || groqKey.isNotBlank() || geminiKey.isNotBlank()
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "AI Categorization",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = onToggle,
-                    enabled = hasAnyKey
-                )
-            }
-
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "Tried in order — OpenAI, then Groq, then Gemini — whichever keys are configured, falling back to the next if one fails. Only the VPA and recipient name (or OCR text) are sent, never amounts or other personal data.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                "Enable AI categorization",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
             )
-
-            if (!hasAnyKey) {
-                Text(
-                    "Add at least one API key below to turn this on.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
-
-            HorizontalDivider()
-            ApiKeyField(
-                label = "OpenAI API Key",
-                placeholder = "sk-...",
-                apiKey = openAiKey,
-                onSaveKey = onSaveOpenAiKey,
-                helpText = "platform.openai.com/api-keys — paid, cheapest models (e.g. gpt-5-nano) cost fractions of a cent per call"
-            )
-            HorizontalDivider()
-            ApiKeyField(
-                label = "Groq API Key",
-                placeholder = "gsk_...",
-                apiKey = groqKey,
-                onSaveKey = onSaveGroqKey,
-                helpText = "console.groq.com/keys — free tier, generous daily limit"
-            )
-            HorizontalDivider()
-            ApiKeyField(
-                label = "Gemini API Key",
-                placeholder = "AIzaSy...",
-                apiKey = geminiKey,
-                onSaveKey = onSaveGeminiKey,
-                helpText = "aistudio.google.com/app/apikey — free tier"
+            Switch(
+                checked = enabled,
+                onCheckedChange = onToggle,
+                enabled = hasAnyKey
             )
         }
+
+        Text(
+            "Tried in order — OpenAI, then Groq, then Gemini — whichever keys are configured, falling back to the next if one fails. Only the VPA and recipient name (or OCR text) are sent, never amounts or other personal data.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        if (!hasAnyKey) {
+            Text(
+                "Add at least one API key below to turn this on.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+
+        HorizontalDivider()
+        ApiKeyField(
+            label = "OpenAI API Key",
+            placeholder = "sk-...",
+            apiKey = openAiKey,
+            onSaveKey = onSaveOpenAiKey,
+            helpText = "platform.openai.com/api-keys — paid, cheapest models (e.g. gpt-5-nano) cost fractions of a cent per call"
+        )
+        HorizontalDivider()
+        ApiKeyField(
+            label = "Groq API Key",
+            placeholder = "gsk_...",
+            apiKey = groqKey,
+            onSaveKey = onSaveGroqKey,
+            helpText = "console.groq.com/keys — free tier, generous daily limit"
+        )
+        HorizontalDivider()
+        ApiKeyField(
+            label = "Gemini API Key",
+            placeholder = "AIzaSy...",
+            apiKey = geminiKey,
+            onSaveKey = onSaveGeminiKey,
+            helpText = "aistudio.google.com/app/apikey — free tier"
+        )
     }
 }
 
@@ -488,31 +538,16 @@ private fun BatteryOptimizationCard(context: android.content.Context) {
 }
 
 @Composable
-private fun HowCaptureWorksCard() {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "How transactions get captured",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "• Auto-capture: after paying in GPay/PhonePe, you must return to " +
-                    "the recipient's chat/history screen before leaving the app — " +
-                    "that's the only screen this can read. The PIN-entry, " +
-                    "processing, and success screens are locked down by the " +
-                    "payment app itself and can't be read at all.",
-                style = MaterialTheme.typography.bodySmall
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                "• Screenshot import: share a payment screenshot (e.g. from the " +
-                    "success screen) to this app via the share sheet — Gemini reads " +
-                    "the amount and recipient directly from the image.",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
+private fun HowCaptureWorksContent() {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "• Auto-capture: after paying in GPay/PhonePe, return to the recipient's chat/history screen before leaving the app — that's the only screen this can read. The PIN-entry, processing, and success screens are locked down by the payment app itself.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Text(
+            "• Screenshot import: share a payment screenshot (e.g. from the success screen) to this app via the share sheet — Gemini reads the amount and recipient directly from the image.",
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
@@ -677,6 +712,103 @@ private fun AddMerchantRuleDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+@Composable
+private fun CollapsibleSettingsCard(
+    title: String,
+    subtitle: String? = null,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingAction: (@Composable () -> Unit)? = null,
+    defaultExpanded: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    var expanded by remember { mutableStateOf(defaultExpanded) }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.animateContentSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                leadingIcon?.invoke()
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (subtitle != null) {
+                        Text(
+                            subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                trailingAction?.invoke()
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (expanded) {
+                HorizontalDivider()
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    content = content
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BudgetFieldRow(
+    categoryName: String,
+    currentBudget: String?,
+    onSave: (String?) -> Unit
+) {
+    var draft by remember(currentBudget) { mutableStateOf(currentBudget ?: "") }
+    var wasFocused by remember { mutableStateOf(false) }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            categoryName,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f)
+        )
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it.filter { c -> c.isDigit() || c == '.' } },
+            prefix = { if (draft.isNotBlank()) Text("₹") },
+            placeholder = { Text("No limit", style = MaterialTheme.typography.bodySmall) },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(
+                onDone = { onSave(draft.takeIf { it.isNotBlank() }) }
+            ),
+            modifier = Modifier
+                .width(140.dp)
+                .onFocusChanged { focusState ->
+                    if (wasFocused && !focusState.isFocused) {
+                        onSave(draft.takeIf { it.isNotBlank() })
+                    }
+                    wasFocused = focusState.isFocused
+                },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium
+        )
+    }
 }
 
 @Composable

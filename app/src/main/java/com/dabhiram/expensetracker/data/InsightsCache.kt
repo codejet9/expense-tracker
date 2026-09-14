@@ -43,6 +43,13 @@ object InsightsCache {
         } catch (_: Exception) { null }
     }
 
+    fun invalidateAll(ctx: Context) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove(KEY_WEEK_DATA).remove(KEY_WEEK_TS)
+            .remove(KEY_MONTH_DATA).remove(KEY_MONTH_TS)
+            .apply()
+    }
+
     private fun setCached(ctx: Context, dataKey: String, tsKey: String, bullets: List<String>) {
         val json = JSONArray().apply { bullets.forEach { put(it) } }.toString()
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()

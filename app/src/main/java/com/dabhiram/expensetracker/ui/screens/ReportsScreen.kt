@@ -1,5 +1,6 @@
 package com.dabhiram.expensetracker.ui.screens
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -92,7 +93,8 @@ fun ReportsScreen(repository: TransactionRepository) {
             SpendingInsightsCard(
                 loading = state.insightsLoading,
                 insights = state.spendingInsights,
-                period = state.period
+                period = state.period,
+                onRefresh = { vm.refreshInsights() }
             )
         }
 
@@ -458,50 +460,96 @@ private fun TotalSpendCard(total: String, count: Int, netSpend: String?, reimbur
 }
 
 @Composable
-private fun SpendingInsightsCard(loading: Boolean, insights: List<String>, period: ReportPeriod) {
+private fun SpendingInsightsCard(
+    loading: Boolean,
+    insights: List<String>,
+    period: ReportPeriod,
+    onRefresh: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
     val comparisonLabel = when (period) {
         ReportPeriod.WEEK -> "vs last week"
         ReportPeriod.MONTH -> "vs last month"
         ReportPeriod.CUSTOM -> null
     }
+
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.animateContentSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Text(
-                    "Spending Insights",
+                    "AI Spending Analysis",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
-                if (comparisonLabel != null) {
+                if (comparisonLabel != null && !expanded) {
                     Text(
                         comparisonLabel,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            }
-            if (loading) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                if (loading) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(
-                        "Analyzing your spending...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
-            } else if (insights.isEmpty()) {
-                Text(
-                    "No transactions to analyze yet.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Icon(
+                    if (expanded) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            } else {
-                insights.forEach { bullet ->
-                    Text("• $bullet", style = MaterialTheme.typography.bodySmall)
+            }
+
+            if (expanded) {
+                HorizontalDivider()
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (loading) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text(
+                                "Analyzing your spending...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else if (insights.isEmpty()) {
+                        Text(
+                            "No transactions to analyze yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        insights.forEach { bullet ->
+                            Text("• $bullet", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        OutlinedButton(
+                            onClick = onRefresh,
+                            enabled = !loading,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("↺ Refresh", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
                 }
             }
         }

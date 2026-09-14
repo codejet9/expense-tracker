@@ -40,7 +40,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.graphics.Color
+import com.dabhiram.expensetracker.data.model.BudgetAlert
 import com.dabhiram.expensetracker.data.model.CATEGORY_LENT
+import com.dabhiram.expensetracker.data.model.isExceeded
 import com.dabhiram.expensetracker.data.model.CATEGORY_UNCATEGORIZED
 import com.dabhiram.expensetracker.data.model.isSplit
 import com.dabhiram.expensetracker.data.model.netAmount
@@ -60,10 +62,13 @@ import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(repository: TransactionRepository) {
-    val vm: HomeViewModel = viewModel(factory = HomeViewModel.Factory(repository))
+fun HomeScreen(repository: TransactionRepository, onNavigateToInbox: (() -> Unit)? = null) {
+    val context = LocalContext.current
+    val application = context.applicationContext as android.app.Application
+    val vm: HomeViewModel = viewModel(factory = HomeViewModel.Factory(repository, application))
     val state by vm.uiState.collectAsState()
     val categories by vm.categories.collectAsState()
+    val budgetAlerts by vm.budgetAlerts.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showManageCategoriesDialog by remember { mutableStateOf(false) }
 
@@ -94,6 +99,38 @@ fun HomeScreen(repository: TransactionRepository) {
             total = state.totalToday,
             count = state.transactionCount
         )
+
+        if (budgetAlerts.isNotEmpty()) {
+            val exceededCount = budgetAlerts.count { it.isExceeded }
+            val warningCount = budgetAlerts.size - exceededCount
+            val label = buildString {
+                if (exceededCount > 0) append("$exceededCount budget${if (exceededCount > 1) "s" else ""} exceeded")
+                if (exceededCount > 0 && warningCount > 0) append(", ")
+                if (warningCount > 0) append("$warningCount near limit")
+            }
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clickable { onNavigateToInbox?.invoke() },
+                color = if (exceededCount > 0)
+                    MaterialTheme.colorScheme.errorContainer
+                else
+                    MaterialTheme.colorScheme.tertiaryContainer,
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "🔔 $label · View →",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
 
         if (state.transactions.isEmpty()) {
             Box(

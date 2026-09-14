@@ -9,6 +9,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.dabhiram.expensetracker.data.model.Category
 import com.dabhiram.expensetracker.data.model.CategorizedBy
 import com.dabhiram.expensetracker.data.model.MerchantRule
 import com.dabhiram.expensetracker.data.model.SourceApp
@@ -35,6 +36,9 @@ class SettingsViewModel(
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val categories: StateFlow<List<String>> = repository.categories
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val categoriesWithBudgets: StateFlow<List<Category>> = repository.allCategoriesFlow
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     private val _openAiKey = MutableStateFlow("")
@@ -98,6 +102,13 @@ class SettingsViewModel(
     fun deleteMerchantRule(rule: MerchantRule) {
         viewModelScope.launch {
             repository.deleteMerchantRule(rule)
+        }
+    }
+
+    fun saveCategoryBudget(name: String, budget: String?) {
+        viewModelScope.launch {
+            val trimmed = budget?.trim()?.takeIf { it.isNotBlank() }
+            repository.updateCategoryBudget(name, trimmed)
         }
     }
 

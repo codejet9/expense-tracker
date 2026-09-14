@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.dabhiram.expensetracker.data.db.AppDatabase
 import com.dabhiram.expensetracker.data.repository.TransactionRepository
+import com.dabhiram.expensetracker.notification.EXTRA_NAV_DESTINATION
 import com.dabhiram.expensetracker.notification.EXTRA_TRANSACTION_ID
 import com.dabhiram.expensetracker.ui.navigation.AppNavigation
 import com.dabhiram.expensetracker.ui.theme.ExpenseTrackerTheme
@@ -21,6 +22,7 @@ import com.dabhiram.expensetracker.ui.theme.ExpenseTrackerTheme
 class MainActivity : ComponentActivity() {
 
     private var pendingTransactionId by mutableStateOf<String?>(null)
+    private var pendingNavDestination by mutableStateOf<String?>(null)
 
     private val notifPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -36,6 +38,7 @@ class MainActivity : ComponentActivity() {
         // becomes non-null after the user already navigated away from Inbox.
         if (savedInstanceState == null) {
             pendingTransactionId = intent.getStringExtra(EXTRA_TRANSACTION_ID)
+            pendingNavDestination = intent.getStringExtra(EXTRA_NAV_DESTINATION)
         }
 
         val db = AppDatabase.getInstance(this)
@@ -45,7 +48,8 @@ class MainActivity : ComponentActivity() {
             ExpenseTrackerTheme {
                 AppNavigation(
                     repository = repository,
-                    pendingTransactionId = pendingTransactionId
+                    pendingTransactionId = pendingTransactionId,
+                    pendingNavDestination = pendingNavDestination
                 )
             }
         }
@@ -53,9 +57,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        intent.getStringExtra(EXTRA_TRANSACTION_ID)?.let {
-            pendingTransactionId = it
-        }
+        intent.getStringExtra(EXTRA_TRANSACTION_ID)?.let { pendingTransactionId = it }
+        intent.getStringExtra(EXTRA_NAV_DESTINATION)?.let { pendingNavDestination = it }
     }
 
     private fun requestNotificationPermissionIfNeeded() {

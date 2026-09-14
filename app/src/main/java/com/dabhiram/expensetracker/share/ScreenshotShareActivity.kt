@@ -48,6 +48,7 @@ import com.dabhiram.expensetracker.categorizer.CategorizationResult
 import com.dabhiram.expensetracker.categorizer.Categorizer
 import com.dabhiram.expensetracker.categorizer.DuplicateDetector
 import com.dabhiram.expensetracker.categorizer.knownMappings
+import com.dabhiram.expensetracker.data.TransactionEventBus
 import com.dabhiram.expensetracker.data.db.AppDatabase
 import com.dabhiram.expensetracker.data.model.CategorizedBy
 import com.dabhiram.expensetracker.data.model.SourceApp
@@ -435,4 +436,5 @@ private suspend fun saveTransaction(
             rawDump = "Imported from shared screenshot"
         )
     )
+    TransactionEventBus.notifyChanged()
 }

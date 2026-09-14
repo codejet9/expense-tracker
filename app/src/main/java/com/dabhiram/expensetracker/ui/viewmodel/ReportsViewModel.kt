@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -155,6 +156,11 @@ class ReportsViewModel(
             .launchIn(viewModelScope)
     }
 
+    fun refreshInsights() {
+        InsightsCache.invalidateAll(application)
+        triggerInsightsRefresh(_period.value, debounceMs = 0)
+    }
+
     fun setPeriod(period: ReportPeriod) {
         _period.value = period
     }
@@ -254,8 +260,9 @@ class ReportsViewModel(
                     ReportPeriod.WEEK -> "week"; ReportPeriod.MONTH -> "month"
                     ReportPeriod.CUSTOM -> "period"
                 }
+                val budgetViolations = buildBudgetViolations()
                 val bullets = LlmSpendingAnalyzer.analyze(
-                    currentSpend, currentTotal, comparisonSpend, periodLabel, keys
+                    currentSpend, currentTotal, comparisonSpend, periodLabel, keys, budgetViolations
                 )
                 if (bullets != null) {
                     _insightsText.value = bullets
@@ -347,6 +354,25 @@ class ReportsViewModel(
             spendingInsights = insights,
             insightsLoading = insightsLoading
         )
+    }
+
+    private suspend fun buildBudgetViolations(): Map<String, Pair<BigDecimal, BigDecimal>> {
+        val cats = repository.allCategoriesFlow.first()
+        val monthStart = repository.monthStartMs()
+        val monthTxns = repository.getTransactionsPaged(monthStart, Long.MAX_VALUE, 0, Int.MAX_VALUE)
+        val monthSpend = monthTxns.groupBy { it.category }
+            .mapValues { (_, list) ->
+                list.fold(BigDecimal.ZERO) { acc, t ->
+                    acc + runCatching { BigDecimal(t.amount) }.getOrDefault(BigDecimal.ZERO)
+                }
+            }
+        return cats.mapNotNull { cat ->
+            val limit = cat.budget?.toBigDecimalOrNull()?.takeIf { it > BigDecimal.ZERO }
+                ?: return@mapNotNull null
+            val spent = monthSpend[cat.name] ?: BigDecimal.ZERO
+            if (spent < limit * BigDecimal("0.80")) return@mapNotNull null
+            cat.name to (spent to limit)
+        }.toMap()
     }
 
     class Factory(private val repository: TransactionRepository, private val application: Application) : ViewModelProvider.Factory {

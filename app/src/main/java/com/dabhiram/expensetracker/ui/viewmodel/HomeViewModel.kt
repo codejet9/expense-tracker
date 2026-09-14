@@ -1,18 +1,25 @@
 package com.dabhiram.expensetracker.ui.viewmodel
 
+import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.dabhiram.expensetracker.data.model.BudgetAlert
 import com.dabhiram.expensetracker.data.model.CategorizedBy
 import com.dabhiram.expensetracker.data.model.SourceApp
 import com.dabhiram.expensetracker.data.model.Transaction
 import com.dabhiram.expensetracker.data.repository.TransactionRepository
+import com.dabhiram.expensetracker.notification.BudgetNotificationHelper
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.text.DecimalFormat
 
 data class HomeUiState(
@@ -21,7 +28,10 @@ data class HomeUiState(
     val transactionCount: Int = 0
 )
 
-class HomeViewModel(private val repository: TransactionRepository) : ViewModel() {
+class HomeViewModel(
+    private val repository: TransactionRepository,
+    private val application: Application
+) : ViewModel() {
 
     val uiState: StateFlow<HomeUiState> = repository.todayTransactions()
         .map { txns ->
@@ -38,6 +48,19 @@ class HomeViewModel(private val repository: TransactionRepository) : ViewModel()
 
     val categories: StateFlow<List<String>> = repository.categories
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val budgetAlerts: StateFlow<List<BudgetAlert>> = combine(
+        repository.monthTransactions(),
+        repository.allCategoriesFlow
+    ) { txns, cats ->
+        computeBudgetAlerts(txns, cats)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    init {
+        budgetAlerts.onEach { alerts ->
+            BudgetNotificationHelper.checkAndNotify(application, alerts)
+        }.launchIn(viewModelScope)
+    }
 
     fun addCategory(name: String) {
         viewModelScope.launch { repository.addCategory(name) }
@@ -137,9 +160,34 @@ class HomeViewModel(private val repository: TransactionRepository) : ViewModel()
         }
     }
 
-    class Factory(private val repository: TransactionRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: TransactionRepository,
+        private val application: Application
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-            HomeViewModel(repository) as T
+            HomeViewModel(repository, application) as T
+    }
+}
+
+private fun computeBudgetAlerts(
+    txns: List<Transaction>,
+    cats: List<com.dabhiram.expensetracker.data.model.Category>
+): List<BudgetAlert> {
+    val monthSpend = txns.groupBy { it.category }
+        .mapValues { (_, list) ->
+            list.fold(BigDecimal.ZERO) { acc, t ->
+                acc + runCatching { BigDecimal(t.amount) }.getOrDefault(BigDecimal.ZERO)
+            }
+        }
+    return cats.mapNotNull { cat ->
+        val limit = cat.budget?.toBigDecimalOrNull()?.takeIf { it > BigDecimal.ZERO }
+            ?: return@mapNotNull null
+        val spent = monthSpend[cat.name] ?: BigDecimal.ZERO
+        val percent = runCatching {
+            spent.divide(limit, 4, RoundingMode.HALF_UP).toFloat()
+        }.getOrDefault(0f)
+        if (percent < 0.80f) return@mapNotNull null
+        BudgetAlert(category = cat.name, spent = spent, limit = limit, percentUsed = percent)
     }
 }

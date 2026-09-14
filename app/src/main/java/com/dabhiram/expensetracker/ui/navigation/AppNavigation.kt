@@ -13,6 +13,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -20,11 +22,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.dabhiram.expensetracker.data.repository.TransactionRepository
+import com.dabhiram.expensetracker.notification.NAV_DESTINATION_REPORTS
 import com.dabhiram.expensetracker.ui.screens.HomeScreen
 import com.dabhiram.expensetracker.ui.screens.InboxScreen
 import com.dabhiram.expensetracker.ui.screens.LogViewerScreen
 import com.dabhiram.expensetracker.ui.screens.ReportsScreen
 import com.dabhiram.expensetracker.ui.screens.SettingsScreen
+import com.dabhiram.expensetracker.ui.viewmodel.InboxViewModel
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     object Home : Screen("home", "Home", Icons.Default.Home)
@@ -39,14 +43,29 @@ val bottomNavItems = listOf(Screen.Home, Screen.Reports, Screen.Inbox, Screen.Se
 @Composable
 fun AppNavigation(
     repository: TransactionRepository,
-    pendingTransactionId: String?
+    pendingTransactionId: String?,
+    pendingNavDestination: String? = null
 ) {
     val navController = rememberNavController()
-    val uncategorizedCount by repository.uncategorizedCount.collectAsState(initial = 0)
+    val context = LocalContext.current
+
+    // InboxViewModel at nav level so badge can reflect both uncategorized + budget alerts
+    val inboxVm: InboxViewModel = viewModel(factory = InboxViewModel.Factory(repository))
+    val uncategorizedCount by inboxVm.uncategorized.collectAsState()
+    val budgetAlerts by inboxVm.budgetAlerts.collectAsState()
+    val inboxBadgeCount = uncategorizedCount.size + budgetAlerts.count { it.percentUsed > 1.0f }
 
     LaunchedEffect(pendingTransactionId) {
         if (pendingTransactionId != null) {
             navController.navigate(Screen.Inbox.route) {
+                launchSingleTop = true
+            }
+        }
+    }
+
+    LaunchedEffect(pendingNavDestination) {
+        if (pendingNavDestination == NAV_DESTINATION_REPORTS) {
+            navController.navigate(Screen.Reports.route) {
                 launchSingleTop = true
             }
         }
@@ -60,10 +79,10 @@ fun AppNavigation(
                 bottomNavItems.forEach { screen ->
                     NavigationBarItem(
                         icon = {
-                            if (screen == Screen.Inbox && uncategorizedCount > 0) {
+                            if (screen == Screen.Inbox && inboxBadgeCount > 0) {
                                 BadgedBox(badge = {
                                     Badge {
-                                        Text(if (uncategorizedCount > 99) "99+" else "$uncategorizedCount")
+                                        Text(if (inboxBadgeCount > 99) "99+" else "$inboxBadgeCount")
                                     }
                                 }) {
                                     Icon(screen.icon, contentDescription = screen.label)
@@ -94,14 +113,21 @@ fun AppNavigation(
             modifier = Modifier.padding(innerPadding)
         ) {
             composable(Screen.Home.route) {
-                HomeScreen(repository = repository)
+                HomeScreen(
+                    repository = repository,
+                    onNavigateToInbox = {
+                        navController.navigate(Screen.Inbox.route) {
+                            launchSingleTop = true
+                        }
+                    }
+                )
             }
             composable(Screen.Reports.route) {
                 ReportsScreen(repository = repository)
             }
             composable(Screen.Inbox.route) {
                 InboxScreen(
-                    repository = repository,
+                    inboxVm = inboxVm,
                     pendingTransactionId = pendingTransactionId
                 )
             }

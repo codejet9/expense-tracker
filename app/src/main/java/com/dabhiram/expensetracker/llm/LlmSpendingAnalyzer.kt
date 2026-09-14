@@ -15,10 +15,11 @@ object LlmSpendingAnalyzer {
         currentTotal: BigDecimal,
         comparisonSpend: Map<String, BigDecimal>?,
         periodLabel: String,
-        keys: MultiProviderLlmClient.Keys
+        keys: MultiProviderLlmClient.Keys,
+        budgetViolations: Map<String, Pair<BigDecimal, BigDecimal>> = emptyMap()
     ): List<String>? = withContext(Dispatchers.IO) {
         val system = buildSystemPrompt()
-        val user = buildUserPrompt(currentSpend, currentTotal, comparisonSpend, periodLabel)
+        val user = buildUserPrompt(currentSpend, currentTotal, comparisonSpend, periodLabel, budgetViolations)
         for ((providerName, apiKey) in MultiProviderLlmClient.configuredProviders(keys)) {
             try {
                 val raw = MultiProviderLlmClient.callProvider(providerName, apiKey, system, user)
@@ -53,7 +54,8 @@ Return 3-4 insights. Be specific with ₹ amounts. Compare with previous period 
         currentSpend: Map<String, BigDecimal>,
         currentTotal: BigDecimal,
         comparisonSpend: Map<String, BigDecimal>?,
-        periodLabel: String
+        periodLabel: String,
+        budgetViolations: Map<String, Pair<BigDecimal, BigDecimal>>
     ): String {
         val fmt = java.text.DecimalFormat("#,##,##0.##")
         val sb = StringBuilder()
@@ -71,6 +73,19 @@ Return 3-4 insights. Be specific with ₹ amounts. Compare with previous period 
         } else {
             sb.appendLine()
             sb.appendLine("No previous period data available. Analyze the current spending only.")
+        }
+        if (budgetViolations.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("MONTHLY BUDGET STATUS (reference for insights):")
+            budgetViolations.forEach { (cat, pair) ->
+                val (spent, limit) = pair
+                val status = if (spent > limit)
+                    "EXCEEDED by ₹${fmt.format(spent - limit)}"
+                else
+                    "${(spent.toDouble() / limit.toDouble() * 100).toInt()}% used"
+                sb.appendLine("  $cat: ₹${fmt.format(spent)} / ₹${fmt.format(limit)} ($status)")
+            }
+            sb.appendLine("Reference exceeded budgets specifically when giving advice.")
         }
         return sb.toString()
     }

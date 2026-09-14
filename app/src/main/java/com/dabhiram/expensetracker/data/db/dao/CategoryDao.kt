@@ -24,4 +24,7 @@ interface CategoryDao {
 
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM categories")
     suspend fun maxSortOrder(): Int
+
+    @Query("UPDATE categories SET budget = :budget WHERE name = :name")
+    suspend fun updateBudget(name: String, budget: String?)
 }
