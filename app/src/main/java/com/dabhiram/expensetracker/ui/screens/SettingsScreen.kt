@@ -132,54 +132,6 @@ fun SettingsScreen(
             }
 
             item {
-                SplitDefaultsCard(
-                    defaultPeople = defaultSplitPeople,
-                    onDecrement = { if (defaultSplitPeople > 2) vm.saveDefaultSplitPeople(context, defaultSplitPeople - 1) },
-                    onIncrement = { vm.saveDefaultSplitPeople(context, defaultSplitPeople + 1) }
-                )
-            }
-
-            item {
-                ActionCard(
-                    title = "Export Transactions",
-                    subtitle = "Save all transactions to a CSV file in Downloads",
-                    icon = Icons.Default.FileDownload,
-                    buttonLabel = "Export CSV"
-                ) {
-                    vm.exportToCsv(context) { _, msg ->
-                        exportMessage = msg
-                    }
-                }
-            }
-
-            item {
-                ActionCard(
-                    title = "Import Transactions",
-                    subtitle = "Restore transactions from a previously exported CSV",
-                    icon = Icons.Default.FileUpload,
-                    buttonLabel = "Import CSV"
-                ) {
-                    importLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "application/csv", "*/*"))
-                }
-            }
-
-            item {
-                ActionCard(
-                    title = "Accessibility Logs",
-                    subtitle = "View raw view tree dumps from GPay / PhonePe",
-                    icon = Icons.AutoMirrored.Filled.TextSnippet,
-                    buttonLabel = "View Logs",
-                    onClick = onViewLogs
-                )
-            }
-
-            if (BuildConfig.DEBUG) {
-                item {
-                    DebugSeedCard { vm.seedTestTransactions() }
-                }
-            }
-
-            item {
                 val budgetPageCount = ((categoriesWithBudgets.size + BUDGET_PAGE_SIZE - 1) / BUDGET_PAGE_SIZE).coerceAtLeast(1)
                 LaunchedEffect(categoriesWithBudgets.size) {
                     if (budgetPage >= budgetPageCount) budgetPage = (budgetPageCount - 1).coerceAtLeast(0)
@@ -228,6 +180,54 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+
+            item {
+                SplitDefaultsCard(
+                    defaultPeople = defaultSplitPeople,
+                    onDecrement = { if (defaultSplitPeople > 2) vm.saveDefaultSplitPeople(context, defaultSplitPeople - 1) },
+                    onIncrement = { vm.saveDefaultSplitPeople(context, defaultSplitPeople + 1) }
+                )
+            }
+
+            item {
+                ActionCard(
+                    title = "Export Transactions",
+                    subtitle = "Save all transactions to a CSV file in Downloads",
+                    icon = Icons.Default.FileDownload,
+                    buttonLabel = "Export CSV"
+                ) {
+                    vm.exportToCsv(context) { _, msg ->
+                        exportMessage = msg
+                    }
+                }
+            }
+
+            item {
+                ActionCard(
+                    title = "Import Transactions",
+                    subtitle = "Restore transactions from a previously exported CSV",
+                    icon = Icons.Default.FileUpload,
+                    buttonLabel = "Import CSV"
+                ) {
+                    importLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "application/csv", "*/*"))
+                }
+            }
+
+            item {
+                ActionCard(
+                    title = "Accessibility Logs",
+                    subtitle = "View raw view tree dumps from GPay / PhonePe",
+                    icon = Icons.AutoMirrored.Filled.TextSnippet,
+                    buttonLabel = "View Logs",
+                    onClick = onViewLogs
+                )
+            }
+
+            if (BuildConfig.DEBUG) {
+                item {
+                    DebugSeedCard { vm.seedTestTransactions() }
                 }
             }
 

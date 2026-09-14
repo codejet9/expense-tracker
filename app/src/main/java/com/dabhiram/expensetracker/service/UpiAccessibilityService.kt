@@ -261,6 +261,7 @@ class UpiAccessibilityService : AccessibilityService() {
         )
 
         Log.i(TAG, "Saved: ₹${parsed.amount} to ${parsed.recipientName} → $category")
+        com.dabhiram.expensetracker.data.TransactionEventBus.notifyChanged()
 
         if (needsUserInput) {
             TransactionNotificationManager.postCategorizationNotification(
