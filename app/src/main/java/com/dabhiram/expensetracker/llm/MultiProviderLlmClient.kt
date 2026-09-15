@@ -29,7 +29,7 @@ object MultiProviderLlmClient {
     private const val OPENAI_MODEL = "gpt-5-nano"
 
     private const val GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-    private const val GROQ_MODEL = "qwen/qwen3.6-27b"
+    private const val GROQ_MODEL = "qwen/qwen3.8-27b"
 
     private const val GEMINI_URL =
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
@@ -46,14 +46,9 @@ object MultiProviderLlmClient {
 
     fun callProvider(name: String, apiKey: String, systemPrompt: String, userPrompt: String): String? = when (name) {
         "openai" ->
-            // No reasoning_effort — unlike Groq's Qwen, we're not certain
-            // "none" is a valid value for whichever OpenAI model is
-            // configured, and an unrecognized enum value would just fail
-            // the whole call.
+            // reasoning_effort is not uniformly supported across providers and models.
             callOpenAiCompatible(OPENAI_URL, OPENAI_MODEL, apiKey, systemPrompt, userPrompt, reasoningEffort = null)
         "groq" ->
-            // Qwen3 defaults to an extended "thinking" mode; disabling it
-            // keeps this simple classification call fast and predictable.
             callOpenAiCompatible(GROQ_URL, GROQ_MODEL, apiKey, systemPrompt, userPrompt, reasoningEffort = "none")
         "gemini" -> callGemini(systemPrompt, userPrompt, apiKey)
         else -> null

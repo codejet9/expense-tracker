@@ -16,7 +16,9 @@ import com.dabhiram.expensetracker.data.repository.TransactionRepository
 import com.dabhiram.expensetracker.llm.ApiKeyManager
 import com.dabhiram.expensetracker.llm.LlmSpendingAnalyzer
 import com.dabhiram.expensetracker.llm.MultiProviderLlmClient
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -132,24 +134,20 @@ class ReportsViewModel(
             ReportPeriod.CUSTOM -> customRange ?: (0L to Long.MAX_VALUE)
         }
 
-    private var insightsJob: Job? = null
+    // Per-period jobs so switching periods never cancels an in-flight LLM call for another period.
+    private val insightsJobs = mutableMapOf<ReportPeriod, Job>()
+    private val llmInProgress = mutableSetOf<ReportPeriod>()
 
     init {
         _period.onEach { _txnPage.value = 0 }.launchIn(viewModelScope)
         _customRange.onEach { _txnPage.value = 0 }.launchIn(viewModelScope)
 
-        // Trigger insights refresh when period switches (load from cache for WEEK/MONTH,
-        // or fresh LLM call for CUSTOM). No debounce here — period switch is user-driven.
         _period.onEach { period ->
             triggerInsightsRefresh(period, debounceMs = 0)
         }.launchIn(viewModelScope)
 
-        // Trigger insights refresh when transactions change (debounced 3s to avoid
-        // storm during bulk import). Cache means WEEK/MONTH won't call LLM if
-        // insights are already up to date.
         TransactionEventBus.lastChangeMs
             .onEach { _ ->
-                // Refresh open drilldown so edits reflect immediately.
                 _drilldown.value?.let { ds -> loadDrilldown(ds.category) }
                 triggerInsightsRefresh(_period.value, debounceMs = 3000)
             }
@@ -158,6 +156,9 @@ class ReportsViewModel(
 
     fun refreshInsights() {
         InsightsCache.invalidateAll(application)
+        insightsJobs.values.forEach { it.cancel() }
+        insightsJobs.clear()
+        llmInProgress.clear()
         triggerInsightsRefresh(_period.value, debounceMs = 0)
     }
 
@@ -166,8 +167,10 @@ class ReportsViewModel(
     }
 
     fun setCustomRange(startMs: Long, endMs: Long) {
+        val customAlreadySelected = _period.value == ReportPeriod.CUSTOM
         _customRange.value = startMs to endMs
         _period.value = ReportPeriod.CUSTOM
+        if (customAlreadySelected) triggerInsightsRefresh(ReportPeriod.CUSTOM, debounceMs = 0)
     }
 
     fun deleteTransaction(transaction: Transaction) {
@@ -207,42 +210,56 @@ class ReportsViewModel(
     }
 
     private fun triggerInsightsRefresh(period: ReportPeriod, debounceMs: Long) {
-        insightsJob?.cancel()
-        insightsJob = viewModelScope.launch {
+        if (period != ReportPeriod.CUSTOM && period in llmInProgress) {
+            if (_period.value == period) _insightsLoading.value = true
+            return
+        }
+
+        insightsJobs[period]?.cancel()
+        if (period == ReportPeriod.CUSTOM) llmInProgress.remove(period)
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             if (debounceMs > 0) delay(debounceMs)
 
-            val keys = ApiKeyManager.providerKeys(application)
-            if (!MultiProviderLlmClient.configuredProviders(keys).any()) {
-                _insightsText.value = listOf("Configure an API key in Settings to enable AI insights.")
-                _insightsLoading.value = false
-                return@launch
-            }
-
-            // For WEEK/MONTH: serve from cache if still valid (no transaction changes since last compute).
-            // For CUSTOM: always make a fresh LLM call — caching arbitrary date ranges isn't worthwhile.
             val lastChange = TransactionEventBus.lastChangeMs.value
             if (period == ReportPeriod.WEEK) {
                 InsightsCache.getWeek(application, lastChange, repository.weekStartMs())?.let { cached ->
-                    _insightsText.value = cached
-                    _insightsLoading.value = false
+                    if (_period.value == period) {
+                        _insightsText.value = cached
+                        _insightsLoading.value = false
+                    }
                     return@launch
                 }
             } else if (period == ReportPeriod.MONTH) {
                 InsightsCache.getMonth(application, lastChange, repository.monthStartMs())?.let { cached ->
-                    _insightsText.value = cached
-                    _insightsLoading.value = false
+                    if (_period.value == period) {
+                        _insightsText.value = cached
+                        _insightsLoading.value = false
+                    }
                     return@launch
                 }
             }
 
+            val keys = ApiKeyManager.providerKeys(application)
+            if (!MultiProviderLlmClient.configuredProviders(keys).any()) {
+                if (_period.value == period) {
+                    _insightsText.value = listOf("Configure an API key in Settings to enable AI insights.")
+                    _insightsLoading.value = false
+                }
+                return@launch
+            }
+
             // Cache miss or CUSTOM — fetch transactions and call LLM.
-            _insightsLoading.value = true
+            if (_period.value == period) _insightsLoading.value = true
+            val transactionVersion = lastChange
+            llmInProgress.add(period)
             try {
                 val (start, end) = periodBounds(period, _customRange.value)
                 val txns = repository.getTransactionsPaged(start, end, 0, Int.MAX_VALUE)
                 if (txns.isEmpty()) {
-                    _insightsText.value = emptyList()
-                    _insightsLoading.value = false
+                    if (_period.value == period) {
+                        _insightsText.value = emptyList()
+                        _insightsLoading.value = false
+                    }
                     return@launch
                 }
 
@@ -265,22 +282,37 @@ class ReportsViewModel(
                     currentSpend, currentTotal, comparisonSpend, periodLabel, keys, budgetViolations
                 )
                 if (bullets != null) {
-                    _insightsText.value = bullets
-                    when (period) {
-                        ReportPeriod.WEEK -> InsightsCache.setWeek(application, bullets)
-                        ReportPeriod.MONTH -> InsightsCache.setMonth(application, bullets)
-                        ReportPeriod.CUSTOM -> Unit
+                    val dataStillCurrent = TransactionEventBus.lastChangeMs.value == transactionVersion
+                    if (dataStillCurrent) {
+                        // Cache completed calls even if the user switched to another period.
+                        when (period) {
+                            ReportPeriod.WEEK -> InsightsCache.setWeek(application, bullets)
+                            ReportPeriod.MONTH -> InsightsCache.setMonth(application, bullets)
+                            ReportPeriod.CUSTOM -> Unit
+                        }
+                        if (_period.value == period) _insightsText.value = bullets
                     }
                 } else {
-                    // Keep existing insights visible rather than replacing with an error.
-                    if (_insightsText.value.isEmpty()) {
+                    if (_period.value == period && _insightsText.value.isEmpty()) {
                         _insightsText.value = listOf("Could not load insights — will retry on next transaction change.")
                     }
                 }
             } finally {
-                _insightsLoading.value = false
+                if (insightsJobs[period] == currentCoroutineContext()[Job]) {
+                    llmInProgress.remove(period)
+                    insightsJobs.remove(period)
+                    if (_period.value == period) _insightsLoading.value = false
+                    if (
+                        _period.value == period &&
+                        TransactionEventBus.lastChangeMs.value != transactionVersion
+                    ) {
+                        triggerInsightsRefresh(period, debounceMs = 0)
+                    }
+                }
             }
         }
+        insightsJobs[period] = job
+        job.start()
     }
 
     private fun buildUiState(

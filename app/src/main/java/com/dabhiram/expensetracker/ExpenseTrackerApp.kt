@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.dabhiram.expensetracker.data.TransactionEventBus
 import com.dabhiram.expensetracker.notification.createNotificationChannels
 import com.dabhiram.expensetracker.worker.WeeklySummaryWorker
 import java.util.Calendar
@@ -15,6 +16,7 @@ class ExpenseTrackerApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        TransactionEventBus.initialize(this)
         createNotificationChannels(this)
         scheduleWeeklySummary(this)
     }

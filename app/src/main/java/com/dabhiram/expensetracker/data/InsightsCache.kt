@@ -5,7 +5,7 @@ import org.json.JSONArray
 
 object InsightsCache {
 
-    private const val PREFS = "insights_cache"
+    private const val PREFS = "insights_cache_v2"
     private const val KEY_WEEK_DATA = "week_data"
     private const val KEY_WEEK_TS = "week_ts"
     private const val KEY_MONTH_DATA = "month_data"
